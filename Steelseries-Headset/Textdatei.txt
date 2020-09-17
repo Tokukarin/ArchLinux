@@ -1,0 +1,177 @@
+ 
+ Steelseries Arctis 7 headset in Linux
+The Steelseries Arctis series headsets are very comfortable. You can wear this headset all day long thanks to the comfortable head strap.
+
+Steelseries Arctis 7
+
+
+There are three models, Arctis 3, 5 and 7. The last one is the most expensive and has wireless connection. Arctis 5 is basically the same without wireless (only USB connection). Arctis 3 has only analog inputs.
+
+I've got the Arctis 7 model and of course I'm using it with Linux.
+
+There were some issues setting it up. It works fine in Alsa, the device is recognized. You do have to adjust sound levels, at least the mic has too low sound level. Use alsamixer on command line to adjust all volume levels for the headset to 100% (the two outputs and one input).
+
+But Pulseaudio has some issues. Only the mono device (chat output) and microphone is visible. This is because the headset uses a non-supported configuration with two output devices with the same name (PCM, 0 and PCM, 1). This is the output of "amixer -c1":
+
+    Simple mixer control 'PCM',0
+      Capabilities: pvolume pvolume-joined pswitch pswitch-joined
+      Playback channels: Mono
+      Limits: Playback 0 - 64
+      Mono: Playback 64 [100%] [0.00dB] [on]
+    Simple mixer control 'PCM',1
+      Capabilities: pvolume pvolume-joined pswitch pswitch-joined
+      Playback channels: Mono
+      Limits: Playback 0 - 64
+      Mono: Playback 60 [94%] [-4.00dB] [on]
+    Simple mixer control 'Headset',0
+      Capabilities: cvolume cvolume-joined cswitch cswitch-joined
+      Capture channels: Mono
+      Limits: Capture 0 - 70
+      Mono: Capture 70 [100%] [6.00dB] [on]
+
+
+Alternative 1
+
+The easiest way to get the headset working as intended, is to issue the following command:
+
+    pacmd load-module module-alsa-sink device=hw:1,1
+
+
+You need to replace the first number with the number of the sound card, which you can find with "aplay -l". The second number stands for the stereo sound output device on the card.
+
+You need to script this command or run it manually, because you can't add it permanently. If the headset isn't connected, there might be issues when running the command. Also, the card number could be different depending on how many sound cards there already are in the PC.
+
+The above command is the fastest way to get the headset to work. The downside is that you manually have to enable it.
+
+Alternative 2
+
+Update 2017-09-02 The below changes are now committed to pulseaudio next branch and will eventually arrive with a new version of pulseaudio to most linux distributions.
+
+
+The following method now works to get all devices to show automatically in Pulseaudio and Gnome sound settings when plugging in the device.
+
+Check the device id of the headset with the following command:
+
+    lsusb | grep SteelSeries
+
+    Bus 003 Device 003: ID 1038:1260 SteelSeries ApS
+
+
+The above device id is same for all Steelseries Arctis 7 headsets (If we are lucky, the Arctis 5 has the same id). Use the device id to set an udev rule at the end of
+
+    /usr/lib/udev/rules.d/90-pulseaudio.rules 
+
+
+(after the other ATTR rows). I'm using the following:
+
+    ATTRS{idVendor}=="1038", ATTRS{idProduct}=="1260", ENV{PULSE_PROFILE_SET}="steelseries-arctis-usb-audio.conf"
+
+
+If you have another headset, you have to replace your idVendor and idProduct with the number you got from the lsusb output.
+
+Then create a file
+
+    /usr/share/pulseaudio/alsa-mixer/profile-sets/steelseries-arctis-usb-audio.conf
+
+
+with the following content:
+
+    # This file is part of PulseAudio.
+    #
+    # PulseAudio is free software; you can redistribute it and/or modify
+    # it under the terms of the GNU Lesser General Public License as
+    # published by the Free Software Foundation; either version 2.1 of the
+    # License, or (at your option) any later version.
+    #
+    # PulseAudio is distributed in the hope that it will be useful, but
+    # WITHOUT ANY WARRANTY; without even the implied warranty of
+    # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+    # General Public License for more details.
+    #
+    # You should have received a copy of the GNU Lesser General Public License
+    # along with PulseAudio; if not, see <http://www.gnu.org/licenses/>.
+
+    ; Steelseries Arctis USB headset
+    ;
+    ; This headset has one mono output, one stereo output and one mono input.
+    ;
+    ; See default.conf for an explanation on the directives used here.
+
+    [General]
+    auto-profiles = yes
+
+    [Mapping analog-mono]
+    device-strings = hw:%f,0,0
+    channel-map = mono
+    paths-output = steelseries-arctis-output-mono
+    paths-input = steelseries-arctis-input
+
+    [Mapping analog-stereo]
+    device-strings = hw:%f,1,0
+    channel-map = left,right
+    paths-output = steelseries-arctis-output-stereo
+    direction = output
+
+    [Profile output:analog-mono+output:analog-stereo+input:analog-mono]
+    output-mappings = analog-mono analog-stereo
+    input-mappings = analog-mono
+    priority = 5100
+    skip-probe = yes
+
+The custom Profile1 makes it possible to select both the stereo device and mono device separately in different applications.
+
+Create a file
+
+     /usr/share/pulseaudio/alsa-mixer/paths/steelseries-arctis-input.conf
+
+with the content:
+
+    [General]
+    description-key = analog-input-microphone-headset
+
+    [Element Headset]
+    volume = merge
+    switch = mute
+    override-map.1 = all
+    override-map.2 = all-left,all-right
+
+
+And a file
+
+    /usr/share/pulseaudio/alsa-mixer/paths/steelseries-arctis-output-mono.conf
+
+with the content:
+
+    [General]
+    description = Headset Mono Output
+
+    [Element PCM]
+    volume = merge
+    switch = mute
+    override-map.1 = all
+    override-map.2 = all-left,all-right
+
+And finally a file
+
+    /usr/share/pulseaudio/alsa-mixer/paths/steelseries-arctis-output-stereo.conf
+
+with the content:
+
+    [General]
+    description-key = analog-output-headphones
+
+
+The reason for only a [General] section in the stereo file is that the mixer devices are named the same (PCM for both stereo and mono device). This is to trick pulse to show the stereo device anyway. Unfortunately it also means that Pulseaudio can't control the hardware volume of the stereo device.
+
+After creating the above, the headset should be recognized whenever you plug it in.
+
+If there are any problems getting the device to show up in sound settings, open pavucontrol (install it if it isn't already) and in Configuration select "Analog mono output + Analog stereo output + Analog mono input" for the Steelseries headset.
+
+You might also have to open alsamixer on command line and adjust volume level for the stereo channel to 100% (the stereo channel hardware mixer is not controlled by Pulseaudio due to the limitation).
+
+Thanks to Tanu Kaskinen2 on the Pulseaudio discussion mailing list3 for all advice on making this headset play with Pulseaudio.
+
+
+[1] https://www.freedesktop.org/wiki/Software/PulseAudio/Backends/ALSA/Profiles/
+[2] https://www.patreon.com/tanuk
+[3] https://lists.freedesktop.org/mailman/listinfo/pulseaudio-discuss
